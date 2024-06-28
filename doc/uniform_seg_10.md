@@ -12,7 +12,7 @@ This document describes the methodology used to create 1/10-mile uniform segment
   - [Part 3: Mapping Crashes to Uniform Segments](#part-3-mapping-crashes-to-uniform-segments)
   - [Ranking the Crash Density](#ranking-the-crash-density)
   - [Visualizing the Crash Stats](#visualizing-the-crash-stats)
-  - [Dunping out the Crash Matchup](#dunping-out-the-crash-matchup)
+  - [Dumping out the Crash Matchup](#dumping-out-the-crash-matchup)
 - [Revisiting Matchup and Intersections](#revisiting-matchup-and-intersections)
 
 ## Process
@@ -384,7 +384,7 @@ pgsql2shp -f ./crash_segs_01mi_peds_geom/crash_segs_01mi_peds_geom.shp -h localh
 zip -r -p crash_segs_01mi_peds_geom.zip crash_segs_01mi_peds_geom
 ```
 
-### Dunping out the Crash Matchup
+### Dumping out the Crash Matchup
 
 This view creates an annotation of each crash that's matched up with the 0.1-mile segments. This is inspired by the intersections matchup.
 
