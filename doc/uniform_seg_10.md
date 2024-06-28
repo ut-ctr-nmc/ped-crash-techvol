@@ -16,7 +16,7 @@ This document describes the methodology used to create 1/10-mile uniform segment
 - [Revisiting Matchup and Intersections](#revisiting-matchup-and-intersections)
 
 ## Process
-This process follows the Uniform Segments documentation, but for the purpose of creating uniform segments that are about 1/10 of a mile.
+This process follows the [Uniform Segments documentation](uniform_seg.md), but for the purpose of creating uniform segments that are about 1/10 of a mile.
 
 ### Part 1: Proposing Segments
 Here we propose the division of segments, keeping to 1/10-mile segments and allowing for some flexibility at the ends.
