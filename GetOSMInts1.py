@@ -3,7 +3,9 @@ GetOSMInts1.py: First attempt at getting OSM intersections that follows Attempt 
 the intersections.md document
 """
 
-import requests, urllib
+import requests, time
+from urllib3.util import Retry
+from requests.adapters import HTTPAdapter
 from collections import namedtuple
 import csv, sys
 
@@ -12,10 +14,15 @@ OUTFILE = "osm_ints.csv"
 PROGRAM_DESC = "Gets OSM intersections that follows Attempt #3, Approach #1"
 
 # Points to Overpass API to get data from:
-OVERPASS_URL = "http://HOST-MACHINE:8090/api/interpreter"
+OVERPASS_URL = "https://overpass-api.de/api/interpreter"
 
-# CAVEAT: This only has the state of Texas map in it. If it had more, we'd need to filter on the State of Texas.
+# Seconds to wait between API calls so as not to overload the server:
+OVERPASS_DELAY = 5.0
 
+# Note that ideally, we'd just draw from a local Overpass instance that has just the Texas
+# map in it. But, we This only has the state of Texas map in it. If it had more, we'd need to filter on the State of Texas.
+
+# Bounding box around Texas and number of chunks to break it into to regulate Overpass API calls:
 CORNER_LOW = (25.5136, -107.0439)
 CORNER_HIGH = (36.6501, -93.3778)
 STEPS_NS = 30
@@ -25,11 +32,21 @@ OVERLAP = 0.05
 
 # Determine roadway types we're interested in:
 HIGHWAY_CLAUSE='["highway"~"^(motorway|trunk|primary|secondary|tertiary|motorway_link|trunk_link|primary_link|unclassified|residential|living_street)$"]'
-#(Saved as "try1"):
-#HIGHWAY_CLAUSE='["highway"~"^(motorway|trunk|primary|secondary|tertiary|motorway_link|trunk_link|primary_link|secondary_link)$"]'
 
 Intersection = namedtuple("Intersection", "lat lon signal junction midblock_sig")
 Way = namedtuple("Way", "type name")
+
+retry_strategy = Retry(
+    total=10,                         # Number of total retries
+    backoff_factor=2,                 # Wait 2s, 4s... between retries
+    status_forcelist=[429, 502, 503, 504], # Retry on these server errors
+    raise_on_status=False,            # Return response instead of raising exception if retries fail
+    allowed_methods=["POST"],         # Only retry on POST requests
+)
+adapter = HTTPAdapter(max_retries=retry_strategy)
+session = requests.Session()
+session.mount("https://", adapter)
+session.mount("http://", adapter)
 
 def tf(inVal):
     return "TRUE" if inVal else "FALSE"
@@ -37,10 +54,18 @@ def tf(inVal):
 def getChunk(nodeCache, waySets, lowCoords, highCoords):
     queryStr = '[out:json];way(%g,%g,%g,%g)%s;(._;>;);out meta;' % (lowCoords[0], lowCoords[1], highCoords[0], highCoords[1], HIGHWAY_CLAUSE)
     print("  Fetching from Overpass API... ", end="", flush=True)
-    queryStr = urllib.parse.quote(queryStr)
-    response = requests.get(OVERPASS_URL + "?data=" + queryStr)
+    headers = {
+        "Accept": "application/json",
+        "Content-Type": "text/plain",
+        "User-Agent": "GetOSMInts1/1.0",
+    }
+    response = session.post(OVERPASS_URL, data={"data": queryStr}, headers=headers, timeout=60)
     response.raise_for_status()
-    result = response.json()
+    if response.status_code == 200:
+        result = response.json()
+    else:
+        print("Error: Received status code %d from Overpass API." % response.status_code)
+        return
     print("Done.")
     
     nodeCount = 0
@@ -75,7 +100,6 @@ def process():
     nodeCache = {}
     waySets = {}
     
-    nodeCount = 0
     blockWidth = (CORNER_HIGH[1] - CORNER_LOW[1]) / STEPS_EW
     blockHeight = (CORNER_HIGH[0] - CORNER_LOW[0]) / STEPS_NS
     for vStep in range(STEPS_NS):
@@ -83,7 +107,8 @@ def process():
             lowCoords = (CORNER_LOW[0] + blockHeight * vStep - blockHeight * OVERLAP, CORNER_LOW[1] + blockWidth * hStep - blockWidth * OVERLAP)
             highCoords = (CORNER_LOW[0] + blockHeight * (vStep + 1) + blockHeight * OVERLAP, CORNER_LOW[1] + blockWidth * (hStep + 1) + blockWidth * OVERLAP)
             print("Getting (%.4f,%.4f)-(%.4f,%.4f)..." % (lowCoords[0], lowCoords[1], highCoords[0], highCoords[1]))
-            nodeCount = getChunk(nodeCache, waySets, lowCoords, highCoords)
+            getChunk(nodeCache, waySets, lowCoords, highCoords)
+            time.sleep(OVERPASS_DELAY)
 
     print("Sorting through final geometry...")
     intList = []
