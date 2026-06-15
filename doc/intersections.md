@@ -550,7 +550,7 @@ INSERT INTO ints_osm_members (int_id, roadway_gid, ref_begin, lin_ref)
   SELECT DISTINCT ON (i.int_id, u.roadway_gid)
     i.int_id, u.roadway_gid, u.ref_begin,
     CASE WHEN ST_GeometryType(u.geog::geometry) = 'ST_LineString'
-      THEN ST_Line_Locate_Point(u.geog::geometry, i.center::geometry) * (u.ref_end - u.ref_begin) + u.ref_begin
+      THEN ST_LineLocatePoint(u.geog::geometry, i.center::geometry) * (u.ref_end - u.ref_begin) + u.ref_begin
       ELSE NULL
     END AS lin_ref
   FROM ints_osm i, uniform_segs_1mi u
@@ -583,7 +583,7 @@ WITH q AS (
   WHERE iom.roadway_gid = r.gid
     AND iom.lin_ref::numeric >= r.frm_dfo - 0.001
     AND iom.lin_ref::numeric <= r.to_dfo + 0.001
-    ORDER BY iom.int_id, iom.roadway_gid, r.adt_adj DESC
+    ORDER BY iom.int_id, iom.roadway_gid, r.adt_cur DESC
 )
 UPDATE ints_osm_members iom
   SET closest_dfo = q.frm_dfo
@@ -594,7 +594,7 @@ UPDATE ints_osm_members iom
 -- Figure out the 0.1-mile closest matching segment:
 UPDATE ints_osm_members iom
   SET ref_begin_01 = u01.ref_begin
-  FROM uniform_segs_01mi u01
+  FROM uniform_segs_1mi u01
   WHERE iom.roadway_gid = u01.roadway_gid
     AND iom.lin_ref >= u01.ref_begin
     AND iom.lin_ref <= u01.ref_end;
@@ -609,7 +609,7 @@ UPDATE ints_osm_members iom
 -- Add street names to the intersections:
 -- TODO: Will need to rerun this after Natalia finishes current stage of analysis.
 WITH q AS (
-  SELECT i.int_id, string_agg(iom.descr, ' & ' ORDER BY r.adt_adj DESC, iom.descr) AS descr
+  SELECT i.int_id, string_agg(iom.descr, ' & ' ORDER BY r.adt_cur DESC, iom.descr) AS descr
     FROM ints_osm i, ints_osm_members iom, roadway_inv r
     WHERE i.int_id = iom.int_id
       AND iom.roadway_gid = r.gid

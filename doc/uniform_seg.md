@@ -1,22 +1,23 @@
 # <!-- omit in toc -->Uniform Segmentation of Roadway Geometry
 
 This document describes the methodology used to create fairly uniform segments.
-- [First Attempt](#first-attempt)
-  - [Part 1: Proposing Segments](#part-1-proposing-segments)
-    - [Case 1: Segment is < 1.25 miles](#case-1-segment-is--125-miles)
-    - [Case 2: Segment is < 2.5 miles](#case-2-segment-is--25-miles)
-    - [Case 3: Segment is >= 2.5 miles](#case-3-segment-is--25-miles)
-  - [Part 2: Extracting Relevant Data](#part-2-extracting-relevant-data)
-    - [Detail 1: Fundamental parameters](#detail-1-fundamental-parameters)
-  - [Part 2b: Extracting Geometry](#part-2b-extracting-geometry)
-  - [Part 3: Mapping Crashes to Uniform Segments](#part-3-mapping-crashes-to-uniform-segments)
-  - [Ranking the Crash Density](#ranking-the-crash-density)
-  - [Visualizing the Crash Stats](#visualizing-the-crash-stats)
-- [Visualizing the crash_seg_1mi_peds Ranking](#visualizing-the-crash_seg_1mi_peds-ranking)
-- [Revisiting Matchup and Intersections](#revisiting-matchup-and-intersections)
-- [Midblock Crashes and Street Characteristics](#midblock-crashes-and-street-characteristics)
-  - [Approach #1: Mile-Long Uniform Segments](#approach-1-mile-long-uniform-segments)
-  - [Approach #2: 1/10-Mile Long Uniform Segments](#approach-2-110-mile-long-uniform-segments)
+- [Uniform Segmentation of Roadway Geometry](#uniform-segmentation-of-roadway-geometry)
+  - [First Attempt](#first-attempt)
+    - [Part 1: Proposing Segments](#part-1-proposing-segments)
+      - [Case 1: Segment is \< 1.25 miles](#case-1-segment-is--125-miles)
+      - [Case 2: Segment is \< 2.5 miles](#case-2-segment-is--25-miles)
+      - [Case 3: Segment is \>= 2.5 miles](#case-3-segment-is--25-miles)
+    - [Part 2: Extracting Relevant Data](#part-2-extracting-relevant-data)
+      - [Detail 1: Fundamental parameters](#detail-1-fundamental-parameters)
+    - [Part 2b: Extracting Geometry](#part-2b-extracting-geometry)
+    - [Part 3: Mapping Crashes to Uniform Segments](#part-3-mapping-crashes-to-uniform-segments)
+    - [Ranking the Crash Density](#ranking-the-crash-density)
+    - [Visualizing the Crash Stats](#visualizing-the-crash-stats)
+  - [Visualizing the crash\_seg\_1mi\_peds Ranking](#visualizing-the-crash_seg_1mi_peds-ranking)
+  - [Revisiting Matchup and Intersections](#revisiting-matchup-and-intersections)
+  - [Midblock Crashes and Street Characteristics](#midblock-crashes-and-street-characteristics)
+    - [Approach #1: Mile-Long Uniform Segments](#approach-1-mile-long-uniform-segments)
+    - [Approach #2: 1/10-Mile Long Uniform Segments](#approach-2-110-mile-long-uniform-segments)
 
 ## First Attempt
 In this first attempt, the following objectives will be considered:
@@ -139,14 +140,16 @@ This exercise assembles together geometry for each uniform segment so that visua
 ```sql
 CREATE TEMP TABLE seg_extracts1 AS
 WITH q AS (
-  SELECT roadway_gid, ref_begin, ref_end, frm_dfo, to_dfo, geog
+  SELECT roadway_gid, ref_begin, ref_end, frm_dfo, to_dfo, geom
   FROM uniform_segs_1mi, roadway_inv
   WHERE roadway_gid = gid
     AND to_dfo >= ref_begin::numeric
     AND frm_dfo <= ref_end::numeric
   ORDER BY roadway_gid, ref_begin, frm_dfo
 )
-SELECT q.roadway_gid, q.ref_begin, q.ref_end, array_agg(q.geog) AS geog_array, min(frm_dfo::float) AS min_frm_dfo, max(to_dfo::float) AS max_to_dfo
+SELECT q.roadway_gid, q.ref_begin, max(q.ref_end) AS ref_end,
+  array_agg(q.geom) AS geog_array, min(frm_dfo::float) AS min_frm_dfo,
+  max(to_dfo::float) AS max_to_dfo
 FROM q
 GROUP BY q.roadway_gid, q.ref_begin;
 
@@ -169,7 +172,7 @@ WHERE se.roadway_gid::numeric = r.gid
   AND ST_GeometryType(geog_gen::geometry) <> 'ST_LineString';
 
 -- Where we can, trim down the geometry to what's visible:
-UPDATE seg_extracts1 SET geog_gen = ST_Line_Substring(geog_gen::geometry, GREATEST((ref_begin - min_frm_dfo) / (max_to_dfo - min_frm_dfo), 0), LEAST((ref_end - min_frm_dfo) / (max_to_dfo - min_frm_dfo), 1))
+UPDATE seg_extracts1 SET geog_gen = ST_LineSubstring(geog_gen::geometry, GREATEST((ref_begin - min_frm_dfo) / (max_to_dfo - min_frm_dfo), 0), LEAST((ref_end - min_frm_dfo) / (max_to_dfo - min_frm_dfo), 1))
 WHERE ST_GeometryType(geog_gen::geometry) = 'ST_LineString';
 
 -- Persist the results:
@@ -185,10 +188,10 @@ Then, create a view that links with those representative segments:
 ```sql
 CREATE OR REPLACE VIEW uniform_segs_1mi_data AS
   SELECT f.gid, ref_begin, ref_end, seg_count, seg_total, total_length, closest_frm_dfo,
-    overlap, frm_dfo, f_system, spd_max, hwy_des1, row_w_usl, num_lanes, med_wid, med_type,
-    s_wid_i, s_wid_o, s_type_i, s_type_o, dvmt, adt_adj, trk_aadt_p, sec_bic, school_zn,
+    overlap, frm_dfo, f_system, spd_max, hwy_des, ste_nam, num_lanes, med_wid, med_type,
+    s_wid_i, s_wid_o, s_type_i, s_type_o, dvmt, adt_cur, trk_aadt_p, sec_bic, school_zn,
     aces_ctrl, clmb_ps_la, accel_dece, k_fac, s_use_i, desgn_yr, rt_turn_la,
-    lt_turn_la, lane_width, peak_prkg, u.geog
+    lt_turn_la, lane_width, u.geog
   FROM uniform_segs_1mi u, roadway_inv f
   WHERE f.gid = roadway_gid::numeric
     AND closest_frm_dfo = frm_dfo;
