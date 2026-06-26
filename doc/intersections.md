@@ -380,9 +380,7 @@ Let's see how well these results can be used, and come up with ideas on how to b
 
 This attempt is intended to simplify Attempt #1 by looking only at crashes that have been flagged with `AT_INTRSCT_FL` and to take a different approach to identifying intersections. Some of the ambiguities around grade separations and divided roadway direction may be clearer. Further, this can be run on a later version of PostgreSQL and PostGIS that offer better functions for clustering, further simplifying the process.
 
-> **TODO:** TBD
-
-
+> **NOTE:** Not attempted. Attempt #3 below shows more promise.
 
 Looking at naming patterns for service roads:
 ```sql
@@ -486,11 +484,11 @@ pg_dump -U **** -Fc -f intersections_osm1.sqlbin -t intersections_osm1 pedcrash
 pg_restore -Fc -C intersections_osm1.sqlbin | psql -h HOST-MACHINE -U nmc -p 5434 -d pedcrash
 ```
 
-Now, do clustering on the PostgreSQL 10 database. Clustering will be set to group together intersections 75m apart, allowing for singletons.
+Now, do clustering on the PostgreSQL 10 database. Clustering will be set to group together intersections 40m apart, allowing for singletons.
 
 ```sql
 WITH q AS (
-  SELECT int_id, ST_ClusterDBSCAN(ST_Transform(center::geometry, 2278), eps := 75, minPoints := 1) OVER (ORDER BY int_id) AS cluster_num
+  SELECT int_id, ST_ClusterDBSCAN(ST_Transform(center::geometry, 3082), eps := 40, minPoints := 1) OVER (ORDER BY int_id) AS cluster_num
   FROM intersections_osm1
 )
 UPDATE intersections_osm1 AS io1
@@ -540,7 +538,7 @@ CREATE TABLE ints_osm_members (
   ref_begin real, -- Maps to the closest 1-mile uniform segment
   ref_begin_01 real, -- Maps to the closest 0.1-mile uniform segment
   closest_dfo numeric, -- Maps to the closest TxDOT Roadway Inventory segment
-  lin_ref real,
+  lin_ref real, -- Actual point along the roadway where intersection found
   descr varchar,
   PRIMARY KEY (int_id, roadway_gid)
 );
@@ -554,11 +552,39 @@ INSERT INTO ints_osm_members (int_id, roadway_gid, ref_begin, lin_ref)
       ELSE NULL
     END AS lin_ref
   FROM ints_osm i, uniform_segs_1mi u
-  WHERE ST_DWithin(i.center, u.geog, 40, FALSE)
+  WHERE ST_DWithin(i.center, u.geog, 30, FALSE)
   ORDER BY i.int_id, u.roadway_gid, ST_Distance(i.center, u.geog, FALSE);
 
--- TODO: There are 78 entries that have NULL for lin_ref.
--- Go and figure out another way to approximate.
+-- Sanity check for delete query below: how many multiple intersections to ends
+-- of geometry?
+SELECT iom1.roadway_gid, iom1.int_id AS int_id1, iom2.int_id AS int_id2, iom1.lin_ref,
+    ST_Distance(i1.center, u.geog, FALSE)::real AS dist1,
+    ST_Distance(i2.center, u.geog, FALSE)::real AS dist2
+FROM ints_osm_members iom1, ints_osm_members iom2, uniform_segs_1mi u, ints_osm i1, ints_osm i2
+WHERE iom1.roadway_gid = iom2.roadway_gid
+  AND iom1.int_id <> iom2.int_id
+  AND iom1.lin_ref = iom2.lin_ref
+  AND u.roadway_gid = iom1.roadway_gid
+  AND u.ref_begin = iom1.ref_begin
+  AND u.ref_begin = iom2.ref_begin
+  AND i1.int_id = iom1.int_id
+  AND i2.int_id = iom2.int_id
+  AND ST_Distance(i1.center, u.geog, FALSE) > ST_Distance(i2.center, u.geog, FALSE)
+  ORDER BY iom1.roadway_gid, iom1.int_id, iom2.int_id, iom1.lin_ref;
+
+-- Remove those GID references from intersections that were multiply matched
+-- to the same linear reference. Edge cases around matching to ends of links:
+DELETE FROM ints_osm_members iom1
+USING ints_osm_members iom2, uniform_segs_1mi u, ints_osm i1, ints_osm i2
+WHERE iom1.roadway_gid = iom2.roadway_gid
+  AND iom1.int_id <> iom2.int_id
+  AND iom1.lin_ref = iom2.lin_ref
+  AND u.roadway_gid = iom1.roadway_gid
+  AND u.ref_begin = iom1.ref_begin
+  AND u.ref_begin = iom2.ref_begin
+  AND i1.int_id = iom1.int_id
+  AND i2.int_id = iom2.int_id
+  AND ST_Distance(i1.center, u.geog, FALSE) > ST_Distance(i2.center, u.geog, FALSE);
 
 -- Trim away matches that don't match multiple roadways:
 -- TODO: Instead of deleting, do we want to mark as invalid?
@@ -581,8 +607,8 @@ WITH q AS (
     iom.int_id, iom.roadway_gid, r.frm_dfo
   FROM ints_osm_members iom, roadway_inv r
   WHERE iom.roadway_gid = r.gid
-    AND iom.lin_ref::numeric >= r.frm_dfo - 0.001
-    AND iom.lin_ref::numeric <= r.to_dfo + 0.001
+    AND iom.lin_ref::numeric >= r.frm_dfo - 0.0001
+    AND iom.lin_ref::numeric <= r.to_dfo + 0.0001
     ORDER BY iom.int_id, iom.roadway_gid, r.adt_cur DESC
 )
 UPDATE ints_osm_members iom
